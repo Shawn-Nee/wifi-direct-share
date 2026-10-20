@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0F14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>WIFI 直连</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="mobile">
+  <div class="m-head">
+    <div class="row">
+      <i class="dot" id="dot"></i>
+      <div class="m-title">WIFI 直连</div>
+    </div>
+    <div class="m-sub" id="status">正在连接电脑…</div>
+  </div>
+
+  <div class="m-tabs">
+    <button class="m-tab active" data-v="up">发到电脑</button>
+    <button class="m-tab" data-v="down">电脑文件</button>
+    <button class="m-tab" data-v="text">文字</button>
+  </div>
+
+  <div class="m-body">
+    <!-- 发到电脑 -->
+    <div id="v-up">
+      <div class="big-actions">
+        <button class="big-btn" id="pickBtn">
+          <span class="ico">📁</span>选择文件
+        </button>
+        <button class="big-btn" id="cameraBtn">
+          <span class="ico">📷</span>拍照上传
+        </button>
+      </div>
+      <div class="section-label">传输队列</div>
+      <div id="queueHost"></div>
+    </div>
+
+    <!-- 电脑文件 -->
+    <div id="v-down" hidden>
+      <div class="hint-card" id="downHint">
+        电脑上点「选择文件」添加的文件会出现在这里，点一下即可下载。
+      </div>
+      <div class="hint-card" style="background:rgba(56,225,196,.07);border-color:rgba(56,225,196,.2);color:#B3E7DE">
+        图片点一下可放大预览，<b>长按图片选「保存图片」就直接进相册</b>。
+      </div>
+      <div id="downList"></div>
+    </div>
+
+    <!-- 文字 -->
+    <div id="v-text" hidden>
+      <div class="m-text-input">
+        <textarea id="textBox" placeholder="输入文字，发送到电脑剪贴板…"></textarea>
+        <button class="send-btn" id="sendText">发送</button>
+      </div>
+      <div class="section-label">最近</div>
+      <div id="textList"></div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" multiple hidden>
+<input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
+
+<!-- 图片预览：长按图片保存到相册 -->
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer-bar">
+    <div class="viewer-name" id="viewerName"></div>
+    <button class="viewer-close" id="viewerClose" aria-label="关闭">✕</button>
+  </div>
+  <div class="viewer-stage">
+    <img id="viewerImg" alt="">
+  </div>
+  <div class="viewer-foot">
+    <div class="viewer-tip">长按图片 → 选「保存图片」，即可进入手机相册</div>
+    <a class="viewer-dl" id="viewerDl" href="#" download="">下载到手机文件夹</a>
+  </div>
+</div>
+
+<div class="toast-host" id="toasts"></div>
+<script src="/static/mobile.js"></script>
+</body>
+</html>

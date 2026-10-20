@@ -1,0 +1,32 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ---------- PyInstaller 打包产物 ----------
+# 源码和 spec 在仓库里，产物（近 20MB 的 exe）不提交，走 Releases 分发
+build/
+dist/
+*.exe
+
+# ---------- 压缩包 / 临时文件 ----------
+*.rar
+*.7z
+*.zip
+~$*
+*.tmp
+*.log
+
+# ---------- 编辑器与系统 ----------
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---------- 本机助手数据，不属于项目内容 ----------
+.workbuddy/
