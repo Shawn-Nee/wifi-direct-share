@@ -124,6 +124,8 @@ $('#addr').addEventListener('click', async () => {
 
 /* ---------- 渲染 ---------- */
 const ICON_REVEAL = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h9a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>`;
+const ICON_COPY = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.8A1.8 1.8 0 0 0 13.2 4H5.8A1.8 1.8 0 0 0 4 5.8v7.4A1.8 1.8 0 0 0 5.8 15"/></svg>`;
+const ICON_COPIED = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.6 5 5L19.5 7"/></svg>`;
 const ICON_TRASH = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>`;
 
 function fileRow(f, side) {
@@ -135,7 +137,12 @@ function fileRow(f, side) {
   ].filter(Boolean).join(' · ');
 
   const delTitle = side === 'out' ? '从列表移除' : '删除文件';
+  // 「复制文件」只给手机传上来的文件：发给手机的那些本来就在本机，直接去文件夹复制更顺
+  const copyBtn = side === 'in'
+    ? `<button class="icon-btn" data-act="copy" data-id="${f.id}" title="复制文件（可粘贴到聊天、文档、资源管理器）">${ICON_COPY}</button>`
+    : '';
   const acts = `
+    ${copyBtn}
     <button class="icon-btn" data-act="reveal" data-id="${f.id}" title="在文件夹中显示">${ICON_REVEAL}</button>
     <button class="icon-btn danger" data-act="del" data-id="${f.id}" title="${delTitle}">${ICON_TRASH}</button>`;
 
@@ -349,6 +356,36 @@ async function onListClick(e) {
     const r = await fetch('/api/pc/reveal/' + id, { method: 'POST' });
     const j = await r.json();
     if (!j.ok) toast(j.error || '打开失败', true);
+  } else if (act === 'copy') {
+    if (btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+    let j = {};
+    try {
+      const r = await fetch('/api/pc/copyfile/' + id, { method: 'POST' });
+      j = await r.json().catch(() => ({}));
+    } catch (err) {
+      j = { ok: false, error: '网络异常，复制失败' };
+    } finally {
+      btn.dataset.busy = '';
+      btn.disabled = false;
+    }
+    if (!j.ok) {
+      toast(j.error || '复制失败', true);
+      return;
+    }
+    // 就地给个「已复制」的瞬时反馈，鼠标不用离开那一行
+    btn.classList.add('ok');
+    btn.innerHTML = ICON_COPIED;
+    btn.title = '已复制，可直接粘贴';
+    setTimeout(() => {
+      // 期间列表可能已经重绘，节点被换掉了就别再动它
+      if (!btn.isConnected) return;
+      btn.classList.remove('ok');
+      btn.innerHTML = ICON_COPY;
+      btn.title = '复制文件（可粘贴到聊天、文档、资源管理器）';
+    }, 1300);
+    toast('已复制，到其他软件里 Ctrl+V 即可');
   }
 }
 

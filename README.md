@@ -24,10 +24,29 @@ Windows 电脑 ⇄ 手机，同一个 Wi-Fi 下扫码即传。**手机端不用�
 | 电脑图片 → 手机相册 | 手机列表里图片点一下放大，**长按图片 → 选「保存图片」**，直接进相册 |
 | 电脑截图 → 手机 | 电脑上点「截图」，拖动框选，回车发出去；按 `PrintScreen` 直接唤起 |
 | 文字互传 | 手机发的文字自动进电脑剪贴板，直接 Ctrl+V |
+| 手机文件 → 其他软件 | 在「来自手机」里点该行的**复制**图标，到微信 / Word / 资源管理器里 Ctrl+V |
 
 手机上收到电脑发来的文件是这个样子（图片直接出缩略图，点开可长按保存）：
 
 <img src="docs/screenshots/phone-list.png" width="270" alt="手机端文件列表">
+
+### 「复制文件」和「在文件夹中显示」
+
+「来自手机」列表里每一行右侧有三个图标，从左到右：
+
+| 图标 | 作用 | 交互 |
+| --- | --- | --- |
+| 两个方块（复制） | 把这个**文件本身**放进 Windows 剪贴板，等价于资源管理器里 Ctrl+C | 点一下 → 图标变绿勾约 1 秒 + 底部提示「已复制」，再去目标软件 Ctrl+V 就是粘贴这个文件（不是路径文本） |
+| 文件夹 | 在资源管理器里打开接收目录并选中该文件 | 点一下直接弹窗，不留痕迹 |
+| × | 删除该文件并把记录从列表移除 | 立即生效 |
+
+两者互补：想**接着用这个文件**（贴进微信对话、插进 Word、拷到 U 盘）用「复制」；想**看看它、重命名、换个位置存**用「文件夹」。
+「复制文件」只出现在「来自手机」那边——发给手机的文件本来就在本机，去文件夹里复制更顺手。
+
+<img src="docs/screenshots/in-list-copy.png" width="560" alt="复制后的勾选反馈">
+
+复制失败时不会静默：剪贴板被其他程序占着（输入法、剪贴板管理器）、文件已被移走、
+没有读取权限，都会在底部弹出具体原因。
 
 ### 截图发送
 
@@ -132,7 +151,8 @@ wifilink/netutil.py   局域网 IP 探测，多网卡时挑出最可能对的那
 wifilink/store.py     文件/文字清单与会话状态
 wifilink/server.py    HTTP 接口：上传、下载、鉴权、二维码
 wifilink/desktop.py   应用窗口（Edge --app 模式）
-wifilink/picker.py    Windows 原生文件选择框（comdlg32）
+wifilink/picker.py    Windows 原生文件选择框（comdlg32 / IFileOpenDialog）
+wifilink/clipboard.py 把文件写进剪贴板（CF_HDROP，等价资源管理器 Ctrl+C）
 wifilink/screen.py    抓屏、临时隐藏自身窗口、按选区裁切
 web/desktop.html      电脑端控制台
 web/mobile.html       手机端页面
@@ -159,6 +179,7 @@ tools/make_icon.py    生成图标
 | GET | `/api/thumb/<id>?w=` | 列表缩略图（JPEG，内存缓存） |
 | POST | `/api/text` | 文字互传 |
 | POST | `/api/pc/add` | 桌面端零拷贝登记本地文件（仅本机） |
+| POST | `/api/pc/copyfile/<id>` | 把文件以 `CF_HDROP` 放进剪贴板（仅本机；文件丢失 404、剪贴板被占用 503） |
 | POST | `/api/pc/screenshot` | 抓一张全屏暂存，返回 `{id, w, h}`（仅本机） |
 | GET | `/api/pc/screenshot/<id>` | 取暂存的整屏预览图（仅本机） |
 | POST | `/api/pc/screenshot/<id>/send` | 按 `{x,y,w,h}` 裁切落盘并加入列表，`{full:true}` 为整屏（仅本机） |

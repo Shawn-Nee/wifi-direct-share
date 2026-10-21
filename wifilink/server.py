@@ -443,6 +443,26 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
                 return jsonify(ok=False, error=str(exc)), 500
         return jsonify(ok=False, error="文件不存在"), 404
 
+    @app.post("/api/pc/copyfile/<fid>")
+    def pc_copyfile(fid: str):
+        """把文件以「文件」形式放进 Windows 剪贴板（等价于资源管理器里 Ctrl+C）。"""
+        if not _is_local():
+            return jsonify(ok=False), 403
+        item = store.get(fid)
+        if item is None:
+            return jsonify(ok=False, error="文件记录不存在"), 404
+        if not os.path.isfile(item.path):
+            return jsonify(ok=False, error="源文件已被移动或删除"), 404
+        from . import clipboard
+        try:
+            clipboard.copy_files([item.path])
+        except clipboard.ClipboardError as exc:
+            # 剪贴板被别的程序占着、没权限读、内存不足都从这里出
+            return jsonify(ok=False, error=str(exc)), 503
+        except OSError as exc:
+            return jsonify(ok=False, error=f"复制失败：{exc}"), 500
+        return jsonify(ok=True, name=item.name, path=item.path)
+
     @app.post("/api/pc/opendir")
     def pc_opendir():
         if not _is_local():

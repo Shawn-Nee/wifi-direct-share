@@ -591,6 +591,17 @@ button {
   color: var(--danger);
 }
 
+/* 复制成功的瞬时反馈：图标变对勾并停留一会儿 */
+.icon-btn.ok {
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.12);
+}
+
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .empty {
   flex: 1;
   display: grid;
