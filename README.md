@@ -4,7 +4,7 @@ Windows 电脑 ⇄ 手机，同一个 Wi-Fi 下扫码即传。**手机端不用�
 
 [![最新版本](https://img.shields.io/github/v/release/Shawn-Nee/wifi-direct-share?label=%E4%B8%8B%E8%BD%BD)](https://github.com/Shawn-Nee/wifi-direct-share/releases/latest)
 
-**不想编译？** 直接到 [Releases](https://github.com/Shawn-Nee/wifi-direct-share/releases/latest) 下载 `WIFI_File_Transfer_v1.0.0.exe`（单文件，约 19 MB，免安装）。
+**不想编译？** 直接到 [Releases](https://github.com/Shawn-Nee/wifi-direct-share/releases/latest) 下载最新的 `WIFI_File_Transfer_v*.exe`（单文件，约 19 MB，免安装）。
 
 ![电脑端](docs/screenshots/desktop.png)
 
