@@ -7,6 +7,7 @@ let lastRev = -1;
 let currentIp = '';
 let textSeen = new Set();
 let textInited = false;
+let shotSeq = null;      // 已提示过的截图结果序号（null = 还没对齐过）
 
 const EXT_COLORS = {
   pdf: '#FF7A85', doc: '#7FA8FF', docx: '#7FA8FF', txt: '#9AA8BC', md: '#9AA8BC',
@@ -251,6 +252,21 @@ async function poll() {
       // 上传进度不改变 rev，单独刷新进度区
       if (s.uploads.length) renderUploads(s.uploads);
       else if ($('#uploadArea').innerHTML) $('#uploadArea').innerHTML = '';
+    }
+
+    // 截图结果的落地提示。框选覆盖层 toast 只闪一下，窗口秒关，
+    // 所以真正的「成没成、剪贴板里有没有」这句话在主窗口恢复后补在这里。
+    if (s.shot && s.shot.seq) {
+      if (shotSeq === null) {
+        shotSeq = s.shot.seq;                 // 首次只对齐，不补报历史结果
+      } else if (s.shot.seq !== shotSeq) {
+        shotSeq = s.shot.seq;
+        if (s.shot.clip_ok) {
+          toast('截图已发送，并已复制到剪贴板，可直接 Ctrl+V');
+        } else {
+          toast('截图已发送，但复制到剪贴板失败：' + (s.shot.error || '未知原因'), true);
+        }
+      }
     }
   } catch (e) {
     $('#phoneDot').className = 'dot pending';

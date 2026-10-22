@@ -65,6 +65,16 @@ uploads = UploadTracker()
 _pick_lock = threading.Lock()   # 防止连点弹出多个文件框
 _shot_lock = threading.Lock()   # 抓屏要最小化/恢复窗口，串行执行免得闪
 
+# 最近一次截图的结果。框选覆盖层关得比 toast 还快，成功与否得等主窗口恢复后
+# 由前端轮询时补一句提示（见 /api/state 里的 shot 字段）。
+_shot_info: dict = {"seq": 0}
+
+
+def _note_shot(**fields) -> None:
+    seq = _shot_info["seq"] + 1
+    _shot_info.clear()
+    _shot_info.update(seq=seq, **fields)
+
 
 def _is_local() -> bool:
     return request.remote_addr in ("127.0.0.1", "::1", "localhost")
@@ -268,6 +278,7 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         snap = store.snapshot()
         snap["ok"] = True
         snap["uploads"] = uploads.snapshot()
+        snap["shot"] = dict(_shot_info)
         return jsonify(snap)
 
     # ---------- 上传（手机 → 电脑）----------
@@ -581,8 +592,25 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         item = store.add_file(dest, "pc", name=name)
         if item is None:
             return jsonify(ok=False, error="写入失败"), 500
+
+        # 发送的同时把这张图放进剪贴板：用户往往截完就想贴进聊天窗口/文档，
+        # 少一步「再去文件夹里找」。顺序是先落盘、再进剪贴板、最后才回响应，
+        # 所以前端收到 ok 时两件事都已经做完。
+        # 复制失败不回滚也不报整体失败：图已经存好、手机也能取，只是少了个便利，
+        # 用 clip.ok=false 带原因回去，由界面提示，别让用户以为整次截图白截了。
+        clip_ok, clip_error = True, ""
+        from . import clipboard
+        try:
+            clipboard.copy_image(dest)
+        except clipboard.ClipboardError as exc:
+            clip_ok, clip_error = False, str(exc)
+        except OSError as exc:
+            clip_ok, clip_error = False, f"复制图片失败：{exc}"
+
+        _note_shot(ok=True, name=name, clip_ok=clip_ok, error=clip_error)
         _finish_shot(screen, f"({port})")
-        return jsonify(ok=True, item=item.to_dict(), dir=out_dir)
+        return jsonify(ok=True, item=item.to_dict(), dir=out_dir,
+                       clip={"ok": clip_ok, "error": clip_error})
 
     @app.delete("/api/pc/screenshot/<sid>")
     def pc_screenshot_drop(sid: str):

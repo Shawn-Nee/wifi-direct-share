@@ -332,7 +332,12 @@
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) throw new Error(j.error || '发送失败');
-      bye('已发送：' + ((j.item && j.item.name) || '截图'));
+      // 服务端是先落盘、再把这张图放进剪贴板，最后才回话的，
+      // 所以这里拿到的 clip 就是「粘贴可用与否」的确切结果。
+      const clip = j.clip || {};
+      bye(clip.ok === false
+        ? '已发送，但复制到剪贴板失败：' + (clip.error || '未知原因')
+        : '已发送，并已复制到剪贴板');
     } catch (err) {
       busy = false;
       btnSend.disabled = !box;
