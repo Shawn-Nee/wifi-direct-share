@@ -2,6 +2,10 @@
 
 Windows 电脑 ⇄ 手机，同一个 Wi-Fi 下扫码即传。**手机端不用装任何 App**，鸿蒙、安卓、iOS 都能用。
 
+[![最新版本](https://img.shields.io/github/v/release/Shawn-Nee/wifi-direct-share?label=%E4%B8%8B%E8%BD%BD)](https://github.com/Shawn-Nee/wifi-direct-share/releases/latest)
+
+**不想编译？** 直接到 [Releases](https://github.com/Shawn-Nee/wifi-direct-share/releases/latest) 下载 `WIFI_File_Transfer_v1.0.0.exe`（单文件，约 19 MB，免安装）。
+
 ![电脑端](docs/screenshots/desktop.png)
 
 <img src="docs/screenshots/mobile.png" width="270" alt="手机端">
@@ -189,6 +193,33 @@ python run.py --download-dir "D:\手机发来的文件"   # 改接收目录（�
 ## 打包
 
 双击 `build.bat`，产物在 `dist\WIFI直连.exe`（单文件，免安装，约 19 MB）。
+
+## 发布
+
+exe 不进仓库（`.gitignore` 里排除了 `dist/` 和 `*.exe`），走 Releases 分发：
+
+```bash
+git tag -a v1.0.1 -m "v1.0.1"     # 打标签（版本号自增）
+git push origin v1.0.1
+```
+
+然后到仓库的 **Releases → Draft a new release**，选刚推的 tag，标题写版本名，
+说明里写这一版改了什么，把 `dist\WIFI直连.exe` 拖进附件区即可
+（附件名建议带版本号，如 `WIFI_File_Transfer_v1.0.1.exe`）。
+
+用命令行也行，大文件上传比网页更快：
+
+```bash
+# 建 Release，返回的 id 用来传附件
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/{owner}/{repo}/releases \
+  -d '{"tag_name":"v1.0.1","name":"WIFI 直连 v1.0.1","body":"..."}'
+
+# 传附件（注意是 uploads.github.com，不是 api.github.com）
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/octet-stream" --data-binary @dist/WIFI直连.exe \
+  "https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=WIFI_File_Transfer_v1.0.1.exe"
+```
 
 ## 结构
 
