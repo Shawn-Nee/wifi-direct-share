@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>框选截图 · WIFI 直连</title>
+<link rel="stylesheet" href="/static/shot.css">
+</head>
+<body>
+  <img id="shotImg" alt="" draggable="false">
+
+  <!-- 没有选区时用它铺满整屏压暗；一出现选区就交给 .sel 的 box-shadow 接管 -->
+  <div class="veil" id="veil"></div>
+
+  <div class="sel" id="sel" hidden>
+    <i class="h" data-h="nw" style="left:-6px;top:-6px"></i>
+    <i class="h" data-h="n" style="left:calc(50% - 6px);top:-6px"></i>
+    <i class="h" data-h="ne" style="right:-6px;top:-6px"></i>
+    <i class="h" data-h="e" style="right:-6px;top:calc(50% - 6px)"></i>
+    <i class="h" data-h="se" style="right:-6px;bottom:-6px"></i>
+    <i class="h" data-h="s" style="left:calc(50% - 6px);bottom:-6px"></i>
+    <i class="h" data-h="sw" style="left:-6px;bottom:-6px"></i>
+    <i class="h" data-h="w" style="left:-6px;top:calc(50% - 6px)"></i>
+    <div class="tag" id="tag"></div>
+  </div>
+
+  <div class="hint" id="hint">
+    <b>拖动鼠标框选要发送的区域</b>
+    <span>松手后可拖动边角微调 · 双击确认 · 右键取消</span>
+  </div>
+
+  <div class="bar" id="bar">
+    <div class="keys">
+      <kbd>Esc</kbd><span>取消</span>
+      <kbd>Enter</kbd><span>发送</span>
+      <kbd>↑ ↓ ← →</kbd><span>微调</span>
+    </div>
+    <div class="sp"></div>
+    <button class="btn ghost" id="btnCancel">取消</button>
+    <button class="btn" id="btnFull">整屏发送</button>
+    <button class="btn primary" id="btnSend" disabled>发送所选</button>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+<script src="/static/shot.js"></script>
+</body>
+</html>

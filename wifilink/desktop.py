@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import webbrowser
 from ctypes import wintypes
 
@@ -91,6 +92,81 @@ def _profile_dir() -> str:
     path = os.path.join(base, "WIFILink", "edge-profile")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def _shot_profile_dir() -> str:
+    """框选覆盖层专用的配置目录。
+
+    必须和主窗口分开：共用同一个 profile 时，新进程会把 URL 转交给已在运行的
+    Edge 实例，`--start-fullscreen` 直接被忽略，开出来是个带标题栏的普通窗口。
+    """
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    path = os.path.join(base, "WIFILink", "edge-profile-shot")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def open_shot_window(url: str, port: int | None = None) -> bool:
+    """把框选页开成整屏无边框覆盖窗，返回是否成功拉起进程。
+
+    用 `--start-fullscreen` 而不是窗口尺寸硬撑：实测 app 模式配合这个参数
+    得到的是无标题栏、客户区 3200x2000（正好等于整屏物理像素）的窗口，
+    截图才能真正 1:1 铺满，用户在屏幕上看到什么就能框到什么。
+    进程不 wait：主窗口这会儿是最小化的，覆盖窗由用户操作结束后自行关闭。
+    """
+    edge = _find_edge()
+    if not edge:
+        return False
+
+    from .screen import _ensure_dpi_aware
+
+    _ensure_dpi_aware()
+    user32 = ctypes.windll.user32
+    scale = _dip_scale() or 1.0
+    sw = user32.GetSystemMetrics(0)          # SM_CXSCREEN，物理像素
+    sh = user32.GetSystemMetrics(1)
+    args = [
+        edge,
+        f"--app={url}",
+        f"--user-data-dir={_shot_profile_dir()}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--start-fullscreen",
+        "--window-position=0,0",
+        f"--window-size={int(sw / scale)},{int(sh / scale)}",   # 这两个参数收 DIP
+        "--disable-features=msEdgeSidebarV2",
+    ]
+    try:
+        subprocess.Popen(args)
+    except OSError as exc:
+        print(f"[warn] 打开截图覆盖层失败：{exc}", file=sys.stderr)
+        return False
+    if port:
+        threading.Thread(target=_raise_shot_window, args=(port,), daemon=True).start()
+    return True
+
+
+def _raise_shot_window(port: int) -> None:
+    """等覆盖层窗口出现后把它提到最前。
+
+    窗口是别的进程建的，Windows 不给它前台权限，不主动抢就会压在
+    已激活的窗口下面（用户看到的仍是原来那屏）。标题要到页面加载才变成
+    「框选截图 · WIFI 直连 (端口)」，所以轮询等一会儿。
+    """
+    import time
+
+    from . import screen
+
+    hint = f"({port})"
+    for _ in range(60):                      # 最多等 12s
+        time.sleep(0.2)
+        hwnd = screen._find_window(screen.SHOT_WINDOW_TITLE, hint)
+        if hwnd:
+            screen.raise_window(hwnd)
+            # Edge 拿到焦点后偶尔会重排一次 z 序，隔一下再压一次更保险
+            time.sleep(0.35)
+            screen.raise_window(hwnd)
+            return
 
 
 def open_window(url: str) -> str:

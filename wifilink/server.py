@@ -165,6 +165,13 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
             return Response("forbidden", 403)
         return send_from_directory(WEB_DIR, "desktop.html")
 
+    @app.get("/shot")
+    def shot_page():
+        """框选覆盖层页面。由 open_shot_window 以整屏无边框窗口打开。"""
+        if not _is_local():
+            return Response("forbidden", 403)
+        return send_from_directory(WEB_DIR, "shot.html")
+
     @app.get("/static/<path:rel>")
     def static_files(rel: str):
         return send_from_directory(os.path.join(WEB_DIR, "static"), rel)
@@ -512,15 +519,27 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
     # ---------- 截图发送 ----------
     @app.post("/api/pc/screenshot")
     def pc_screenshot():
-        """抓一张全屏暂存，返回尺寸供前端做选区。真正的落盘在 /send。"""
+        """抓整屏 → 立刻开整屏覆盖层让用户在真实分辨率上框选。
+
+        抓完主窗口保持最小化，直到 /send、DELETE 或 /close 才恢复。
+        """
         if not _is_local():
             return jsonify(ok=False), 403
-        from . import screen
+        from . import desktop, screen
+        hint = f"({port})"
         with _shot_lock:
+            screen.close_shot_window(hint)      # 清掉可能残留的上一个覆盖窗
             try:
-                meta = screen.capture(hide_hint=f"({port})")
+                meta = screen.capture(hide_hint=hint)
             except Exception as exc:  # noqa: BLE001
                 return jsonify(ok=False, error=f"抓屏失败：{exc}"), 500
+            url = (f"http://127.0.0.1:{port}/shot"
+                   f"?sid={meta['id']}&port={port}")
+            if not desktop.open_shot_window(url, port):
+                # 覆盖层起不来，别把主窗口扔在最小化里出不来
+                screen.discard(meta["id"])
+                screen.restore_main(hint)
+                return jsonify(ok=False, error="打不开截图窗口：没找到 Edge"), 500
         return jsonify(ok=True, **meta)
 
     @app.get("/api/pc/screenshot/<sid>")
@@ -562,6 +581,7 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         item = store.add_file(dest, "pc", name=name)
         if item is None:
             return jsonify(ok=False, error="写入失败"), 500
+        _finish_shot(screen, f"({port})")
         return jsonify(ok=True, item=item.to_dict(), dir=out_dir)
 
     @app.delete("/api/pc/screenshot/<sid>")
@@ -569,6 +589,41 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         if not _is_local():
             return jsonify(ok=False), 403
         from . import screen
-        return jsonify(ok=screen.discard(sid))
+        gone = screen.discard(sid)
+        _finish_shot(screen, f"({port})")
+        return jsonify(ok=gone)
+
+    @app.post("/api/pc/screenshot/<sid>/close")
+    def pc_screenshot_close(sid: str):
+        """覆盖层被直接关掉（Alt+F4 / 点关闭）时的兜底。
+
+        页面卸载时用 sendBeacon 打过来：把暂存图丢掉，再把主窗口放回来，
+        否则用户会看到主窗口一直躺在任务栏里最小化着。
+        """
+        if not _is_local():
+            return jsonify(ok=False), 403
+        from . import screen
+        gone = screen.discard(sid)
+        screen.close_shot_window(f"({port})")
+        screen.restore_main(f"({port})")
+        return jsonify(ok=True, discarded=gone)
 
     return app
+
+
+def _finish_shot(screen, hint: str) -> None:
+    """收尾：关掉框选覆盖层，再把主窗口放回前台。
+
+    必须等响应先发出去 —— 覆盖层页面正等着 /send 的结果，
+    立刻关窗会让它的 fetch 断在半路。所以扔到定时器里晚 0.4s 做。
+    """
+    def run() -> None:
+        time.sleep(0.4)
+        try:
+            screen.close_shot_window(hint)
+            time.sleep(0.25)
+            screen.restore_main(hint)
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=run, daemon=True).start()

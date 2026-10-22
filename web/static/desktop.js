@@ -502,20 +502,10 @@ const initialView = location.hash.replace('#', '');
 if (['out', 'in', 'text'].includes(initialView)) activateTab(initialView);
 
 /* ---------- 截图发送 ---------- */
-let shot = null;         // {id, w, h} 服务端暂存的整屏截图
-let shotSelBox = null;   // 当前选区（CSS 像素，相对图片左上角）
-let dragging = null;
+// 框选在独立的整屏覆盖层里完成（/shot 页面，Edge --app 全屏窗口）：
+// 主窗口只负责发起抓屏。服务端抓完会把主窗口最小化，再开覆盖层接管整个屏幕，
+// 用户于是在完整桌面上、按真实分辨率框选，而不是在窗口里的小缩略图上比划。
 let shotBusy = false;
-
-const shotMask = $('#shotMask');
-const shotFrame = $('#shotFrame');
-const shotImg = $('#shotImg');
-const shotSel = $('#shotSel');
-const shotSize = $('#shotSize');
-const shotSendBtn = $('#shotSend');
-const shotFullBtn = $('#shotFull');
-
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 async function openShot() {
   if (shotBusy) return;
@@ -526,21 +516,7 @@ async function openShot() {
     const r = await fetch('/api/pc/screenshot', { method: 'POST' });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || '抓屏失败');
-    shot = j;
-    shotSelBox = null;
-    dragging = null;
-    shotSel.hidden = true;
-    shotSize.hidden = true;
-    shotSendBtn.disabled = true;
-    shotFullBtn.disabled = false;
-    // 先挂 onload 再设 src，避免图片命中的是缓存时事件已经过去
-    const loaded = new Promise((res) => {
-      shotImg.onload = res;
-      shotImg.onerror = res;
-    });
-    shotImg.src = `/api/pc/screenshot/${j.id}?t=${Date.now()}`;
-    shotMask.hidden = false;
-    await loaded;
+    // 覆盖层此时已经在屏幕上；选中并发送后，文件会通过轮询出现在列表里
   } catch (e) {
     toast(e.message || '抓屏失败，可能是当前会话没有桌面权限', true);
   } finally {
@@ -549,136 +525,9 @@ async function openShot() {
   }
 }
 
-function drawSel(x, y, w, h) {
-  shotSelBox = { x, y, w, h };
-  shotSel.style.left = x + 'px';
-  shotSel.style.top = y + 'px';
-  shotSel.style.width = w + 'px';
-  shotSel.style.height = h + 'px';
-  const tiny = w < 2 || h < 2;
-  shotSel.hidden = tiny;
-  shotSize.hidden = tiny;
-  if (!tiny) {
-    // 标签显示真实像素：预览图是缩放过的，直接报 CSS 尺寸会让人误判清晰度
-    const rect = shotImg.getBoundingClientRect();
-    const sx = shot && rect.width ? shot.w / rect.width : 1;
-    const sy = shot && rect.height ? shot.h / rect.height : 1;
-    shotSize.textContent = `${Math.round(w * sx)} × ${Math.round(h * sy)}`;
-    if (y < 26) {
-      shotSize.style.left = x + 5 + 'px';
-      shotSize.style.top = y + 5 + 'px';
-      shotSize.style.transform = 'none';
-    } else {
-      shotSize.style.left = x + 'px';
-      shotSize.style.top = y + 'px';
-      shotSize.style.transform = 'translateY(-100%)';
-    }
-  }
-  shotSendBtn.disabled = !(w >= 6 && h >= 6);
-}
-
-function dragTo(e) {
-  const r = shotImg.getBoundingClientRect();
-  const x = clamp(e.clientX - r.left, 0, r.width);
-  const y = clamp(e.clientY - r.top, 0, r.height);
-  drawSel(Math.min(dragging.x0, x), Math.min(dragging.y0, y),
-          Math.abs(x - dragging.x0), Math.abs(y - dragging.y0));
-}
-
-shotFrame.addEventListener('pointerdown', (e) => {
-  if (!shot || e.button !== 0) return;
-  const r = shotImg.getBoundingClientRect();
-  const x = clamp(e.clientX - r.left, 0, r.width);
-  const y = clamp(e.clientY - r.top, 0, r.height);
-  dragging = { x0: x, y0: y };
-  drawSel(x, y, 0, 0);
-  try { shotFrame.setPointerCapture(e.pointerId); } catch (_) { /* 老内核 */ }
-});
-
-shotFrame.addEventListener('pointermove', (e) => {
-  if (dragging) dragTo(e);
-});
-
-shotFrame.addEventListener('pointerup', (e) => {
-  if (!dragging) return;
-  // 收尾也要按松手位置重算：浏览器不保证 pointerup 前一定有一次 pointermove
-  dragTo(e);
-  dragging = null;
-  try { shotFrame.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-});
-
-function closeShot(discard) {
-  const id = shot && shot.id;
-  shot = null;
-  shotSelBox = null;
-  dragging = null;
-  shotMask.hidden = true;
-  shotImg.removeAttribute('src');
-  shotSel.hidden = true;
-  shotSize.hidden = true;
-  shotSendBtn.disabled = true;
-  shotFullBtn.disabled = false;
-  if (discard && id) {
-    fetch(`/api/pc/screenshot/${id}`, { method: 'DELETE' }).catch(() => {});
-  }
-}
-
-async function sendShot(full) {
-  if (!shot) return;
-  let body;
-  if (full) {
-    body = { full: true };
-  } else {
-    if (!shotSelBox || shotSelBox.w < 6 || shotSelBox.h < 6) {
-      toast('请先拖动鼠标框选一块区域', true);
-      return;
-    }
-    const r = shotImg.getBoundingClientRect();
-    const sx = shot.w / (r.width || 1);
-    const sy = shot.h / (r.height || 1);
-    body = {
-      x: Math.round(shotSelBox.x * sx),
-      y: Math.round(shotSelBox.y * sy),
-      w: Math.round(shotSelBox.w * sx),
-      h: Math.round(shotSelBox.h * sy),
-    };
-  }
-  shotSendBtn.disabled = true;
-  shotFullBtn.disabled = true;
-  try {
-    const res = await fetch(`/api/pc/screenshot/${shot.id}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const j = await res.json();
-    if (!j.ok) throw new Error(j.error || '发送失败');
-    closeShot(false);
-    toast(`已加入列表：${j.item.name}`);
-    poll();
-  } catch (e) {
-    toast(e.message || '发送失败', true);
-    shotSendBtn.disabled = !shotSelBox;
-    shotFullBtn.disabled = false;
-  }
-}
-
 $('#shotBtn').addEventListener('click', openShot);
-$('#shotCancel').addEventListener('click', () => closeShot(true));
-$('#shotFull').addEventListener('click', () => sendShot(true));
-$('#shotSend').addEventListener('click', () => sendShot(false));
 
 document.addEventListener('keydown', (e) => {
-  if (!shotMask.hidden) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeShot(true);
-    } else if (e.key === 'Enter' && !shotSendBtn.disabled) {
-      e.preventDefault();
-      sendShot(false);
-    }
-    return;
-  }
   if (e.key === 'PrintScreen' || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's')) {
     e.preventDefault();
     activateTab('out');
