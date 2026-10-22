@@ -140,8 +140,22 @@ Windows 剪贴板。所以截完不用再去文件夹找文件，直接在微信
 **手机打不开页面？**
 - 确认手机和电脑连的是同一个 Wi-Fi（电脑插网线、手机连 Wi-Fi 通常也算同一个局域网）
 - 关掉手机上的 VPN / 代理
-- 检查 Windows 防火墙是否放行了本程序（专用网络）
-- 电脑装了多块网卡时，点窗口里的「局域网 IP」可以切换地址重新生成二维码
+- 看一眼窗口里「局域网 IP」后面的网卡名：应该是 `WLAN` 或 `以太网`，**如果是 VPN / `vEthernet` / `VMware`，那这个地址手机一定连不上**
+- 点「局域网 IP」可以切到别的网卡的地址，二维码会跟着重画
+- 检查 Windows 防火墙是否放行了本程序（专用网络 / 公用网络）
+
+**IP 是怎么选出来的？**
+
+电脑上往往不止一个地址：开了 VPN 会有隧道网卡（如 `172.19.0.1`），装过 VMware / WSL / Docker 会有 `192.168.x.1` 的虚拟网卡。程序不会简单取「默认路由出口」——那样在开 VPN 时必然选错。
+
+它通过 Windows 的 `GetAdaptersAddresses` 读每块网卡的真实属性（介质类型、是否启用、网关、友好名），再打分筛选：
+
+- VPN / 虚拟机 / WSL / 蓝牙这类虚拟网卡重罚，只在没有别的候选时才用
+- 有默认网关的加分（真局域网才配网关）
+- Wi-Fi、有线以太网优先，`192.168.x` 优于 `10.x`，`172.16–31.x` 视为可疑段
+- `169.254.x`（没拿到 DHCP 的自分配地址）直接排除
+
+选中的地址后面会标出网卡名（如 `192.168.43.4 · WLAN`），一眼能判断对不对。
 
 **速度能有多快？**
 取决于 Wi-Fi。5GHz Wi-Fi 5 实测 40–80 MB/s，Wi-Fi 6 可以更高，是微信/QQ 的几十倍。
@@ -181,7 +195,7 @@ python run.py --download-dir "D:\手机发来的文件"   # 改接收目录（�
 ```
 run.py                启动入口（选端口、选网卡、读配置、起服务、开窗口）
 wifilink/config.py    用户配置：接收目录的读取、校验、落盘
-wifilink/netutil.py   局域网 IP 探测，多网卡时挑出最可能对的那个
+wifilink/netutil.py   网卡枚举与排序（GetAdaptersAddresses），筛掉 VPN / 虚拟机地址
 wifilink/store.py     文件/文字清单与会话状态
 wifilink/server.py    HTTP 接口：上传、下载、鉴权、二维码
 wifilink/desktop.py   应用窗口（Edge --app 模式）
@@ -204,6 +218,8 @@ tools/make_icon.py    生成图标
 | --- | --- | --- |
 | GET | `/j/<token>` | 扫码入口，写 cookie 后跳手机端页面 |
 | GET | `/api/state` | 状态快照（文件、文字、上传进度，以及最近一次截图的结果 `shot`） |
+| GET | `/api/session` | 连接信息：推荐 IP、`ipName`（网卡名）、`ips` / `nics`（全部候选与网关） |
+| GET | `/api/ip` | 重新枚举网卡地址（仅本机） |
 | PUT | `/api/upload?name=` | 流式上传，body 直接是文件 |
 | GET | `/api/download/<id>` | 下载，支持 Range 断点续传 |
 | GET | `/api/config` | 读接收目录配置（仅本机） |

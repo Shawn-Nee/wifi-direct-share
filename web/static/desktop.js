@@ -86,21 +86,33 @@ function renderDir(path, error) {
   }
 }
 
+/* 把当前 IP 同步到地址栏、二维码和网卡标注，避免三处各说各话 */
+function applyIp(ip, { refreshQr = true } = {}) {
+  currentIp = ip;
+  session.url = `http://${ip}:${session.port}/j/${session.token}`;
+  $('#ipText').textContent = ip;
+  const card = (session.nics || []).find((n) => n.ip === ip);
+  $('#ipNic').textContent = card && card.name ? `· ${card.name}` : '';
+  $('#addrText').textContent = `${ip}:${session.port}`;
+  $('#addr').title = '点击复制完整链接：' + session.url;
+  if (refreshQr) {
+    $('#qr').src = `/api/qr.png?ip=${encodeURIComponent(ip)}&r=${Date.now()}`;
+  }
+}
+
 async function loadSession() {
   const r = await fetch('/api/session');
   session = await r.json();
-  currentIp = session.ip;
-  // 标题带上端口：多开时按标题定位窗口才不会认错，用户也能看出是哪一份
+  // 标题带上端口：多开时按窗口标题定位才不会认错，用户也能看出是哪一份
   document.title = `WIFI 直连 · 文件快传 (${session.port})`;
-  $('#qr').src = '/api/qr.png';
-  $('#addrText').textContent = `${session.ip}:${session.port}`;
-  $('#addr').title = '点击复制完整链接：' + session.url;
   $('#hostname').textContent = session.hostname || '—';
-  $('#ipText').textContent = session.ip;
   renderDir(session.downloadDir, session.downloadDirError);
+  applyIp(session.ip, { refreshQr: session.ips && session.ips.length > 1 });
+
   if (session.ips && session.ips.length > 1) {
     $('#ipText').style.cursor = 'pointer';
-    $('#ipText').title = '点击切换网卡地址：' + session.ips.join(' / ');
+    const names = (session.nics || []).map((n) => `${n.ip}（${n.name}）`);
+    $('#ipText').title = '点击切换网卡地址：' + (names.length ? names.join(' / ') : session.ips.join(' / '));
   }
 }
 
@@ -108,14 +120,9 @@ $('#ipText').addEventListener('click', async () => {
   if (!session || !session.ips || session.ips.length < 2) return;
   const list = session.ips;
   const idx = list.indexOf(currentIp);
-  currentIp = list[(idx + 1) % list.length];
-  $('#ipText').textContent = currentIp;
-  const url = `http://${currentIp}:${session.port}/j/${session.token}`;
-  $('#addrText').textContent = `${currentIp}:${session.port}`;
-  $('#addr').title = '点击复制完整链接：' + url;
-  $('#qr').src = `/api/qr.png?ip=${encodeURIComponent(currentIp)}&r=${Date.now()}`;
-  session.url = url;
-  toast('已切换到 ' + currentIp);
+  applyIp(list[(idx + 1) % list.length]);
+  const card = (session.nics || []).find((n) => n.ip === currentIp);
+  toast('已切换到 ' + currentIp + (card && card.name ? '（' + card.name + '）' : ''));
 });
 
 $('#addr').addEventListener('click', async () => {

@@ -95,7 +95,8 @@ def main() -> int:
             print(f"  [警告] --download-dir 不可用：{error}，继续使用 {store.download_dir}")
 
     port = args.port or pick_free_port()
-    host_ip = args.ip or netutil.primary_ip()
+    cards = netutil.nics()
+    host_ip = args.ip or (cards[0].ip if cards else netutil.primary_ip())
     token = args.token or secrets.token_urlsafe(9)
 
     app = create_app(token, host_ip, port)
@@ -122,6 +123,8 @@ def main() -> int:
 
     url = f"http://{host_ip}:{port}/j/{token}"
     local_url = f"http://127.0.0.1:{port}/desktop"
+    pick = next((c for c in cards if c.ip == host_ip), None)
+    skipped = [f"{c.ip}（{c.name}）" for c in cards if c.virtual]
 
     bar = "─" * 58
     print(f"\n{bar}")
@@ -130,8 +133,16 @@ def main() -> int:
     print(f"  手机扫码后访问：{url}")
     print(f"  本机控制台：    {local_url}")
     print(f"  接收目录：      {store.download_dir}")
-    print(f"  本机可用地址：  {', '.join(netutil.local_ips()) or '(' + host_ip + ')'}")
+    if pick:
+        print(f"  所用网卡：      {pick.name}（{pick.ip}，网关 {pick.gateway or '无'}）")
+    print(f"  本机可用地址：  {', '.join(c.ip for c in cards) or '(' + host_ip + ')'}")
     print(f"{bar}")
+    if skipped:
+        print(f"  已跳过虚拟网卡：{', '.join(skipped)}")
+        print("  （VPN / 虚拟机 / WSL 的地址手机连不上，所以不作为默认值）")
+    if pick and pick.virtual:
+        print("  [注意] 当前唯一的地址来自虚拟网卡，手机可能连不上：")
+        print("         请先连上和手机同一个 Wi-Fi，再重启本程序。")
     if store.dir_error:
         print(f"  [警告] {store.dir_error}")
     print(f"  配置文件：      {config.config_path()}")

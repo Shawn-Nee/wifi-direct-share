@@ -195,13 +195,17 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
     def session():
         if not _is_local():
             return jsonify(ok=False), 403
+        cards = netutil.nics()
         return jsonify(
             ok=True,
             url=share_url,
             token=token,
             ip=host_ip,
+            # 当前 IP 属于哪块网卡（WLAN / 以太网 / 某个 VPN），给界面做标注用
+            ipName=next((c.name for c in cards if c.ip == host_ip), ""),
             port=port,
-            ips=netutil.local_ips(),
+            ips=[c.ip for c in cards],
+            nics=[c.to_dict() for c in cards],
             hostname=platform.node(),
             downloadDir=store.download_dir,
             downloadDirSource=store.dir_source,
@@ -525,7 +529,9 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
     def ip_list():
         if not _is_local():
             return jsonify(ok=False), 403
-        return jsonify(ok=True, ips=netutil.local_ips())
+        cards = netutil.nics()
+        return jsonify(ok=True, ips=[c.ip for c in cards],
+                       nics=[c.to_dict() for c in cards])
 
     # ---------- 截图发送 ----------
     @app.post("/api/pc/screenshot")

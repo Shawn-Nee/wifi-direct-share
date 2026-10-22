@@ -350,6 +350,15 @@ button {
   flex: none;
 }
 
+/* IP 后面标一下是哪块网卡（WLAN / 以太网），换网卡时一眼能认出 */
+.nic-tag {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--dim);
+  margin-left: 6px;
+}
+
 /* 接收目录这一行多了个「更改」按钮，标题不能被挤没 */
 .kv-dir b {
   flex: 1;
