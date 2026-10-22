@@ -228,6 +228,121 @@ button {
   font-size: 12.5px;
 }
 
+/* ---------- 局域网里发现的其他电脑 ---------- */
+.peer-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 20px 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(108, 140, 255, 0.10);
+  border: 1px solid rgba(108, 140, 255, 0.26);
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.peer-bar[hidden] {
+  display: none;
+}
+
+.peer-bar.warn {
+  background: rgba(255, 168, 107, 0.10);
+  border-color: rgba(255, 168, 107, 0.30);
+}
+
+.peer-who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-who b {
+  font-weight: 600;
+}
+
+.peer-sub {
+  color: var(--muted);
+}
+
+.peer-btn {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: #06231d;
+}
+
+.peer-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.peer-btn:hover {
+  filter: brightness(1.08);
+}
+
+.peer-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.peer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.peer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.peer-row .pname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-row .pwhen {
+  flex: none;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.peer-del {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.peer-del:hover {
+  background: rgba(255, 107, 122, 0.14);
+  color: var(--danger);
+}
+
 .main {
   display: flex;
   flex: 1;

@@ -44,6 +44,18 @@ def config_path() -> str:
     return os.path.join(config_dir(), CONFIG_FILENAME)
 
 
+def data_path(filename: str) -> str:
+    """配置目录里的其它文件（设备身份、已配对设备）。
+
+    和数据文件放一起：测试时用 WIFILINK_DATA_DIR 指到临时目录，
+    就能把整台机器的状态隔离开，不会污染真实的配对记录。
+    """
+    override = os.environ.get("WIFILINK_DATA_DIR")
+    base = os.path.abspath(override) if override else config_dir()
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, filename)
+
+
 # ---------- 读 ----------
 def _load_raw() -> dict:
     path = config_path()

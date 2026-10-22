@@ -331,7 +331,10 @@ async function poll() {
     }
     const s = await r.json();
     $('#dot').className = 'dot on';
-    $('#status').textContent = '已连接电脑 · 高速直连中';
+    // 从另一台电脑连进来的（配对入口）显示连到了谁，手机扫码的还是原来那句
+    $('#status').textContent = (s.isPeer && s.hostName)
+      ? `已连接「${s.hostName}」· 高速直连中`
+      : '已连接电脑 · 高速直连中';
 
     if (s.rev !== lastRev) {
       lastRev = s.rev;

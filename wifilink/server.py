@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import platform
 import re
@@ -10,6 +11,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from urllib.parse import quote
 
 import qrcode
@@ -17,7 +20,7 @@ from flask import (Flask, Response, jsonify, redirect, request, send_file,
                    send_from_directory, make_response)
 from PIL import Image
 
-from . import config, netutil
+from . import config, device, netutil, pairing
 from .store import store
 
 
@@ -128,8 +131,87 @@ def _disposition(kind: str, name: str) -> str:
 _thumb_cache: dict[tuple, bytes] = {}
 _thumb_lock = threading.Lock()
 
+# 本机发起、正在等对方确认的配对请求：rid -> {base, id, ip}
+_outgoing: dict[str, dict] = {}
+_outgoing_lock = threading.Lock()
 
-def create_app(token: str, host_ip: str, port: int) -> Flask:
+# 跨机配对请求的简单限流：同一来源一分钟内最多 6 次，
+# 免得有人写个脚本反复敲门、把主人的屏幕刷满确认框。
+_pair_hits: dict[str, list[float]] = {}
+_pair_hits_lock = threading.Lock()
+
+
+def _pair_rate_ok(ip: str) -> bool:
+    now = time.time()
+    key = ip or "?"
+    with _pair_hits_lock:
+        hits = [t for t in _pair_hits.get(key, []) if now - t < 60]
+        if len(hits) >= 6:
+            _pair_hits[key] = hits
+            return False
+        hits.append(now)
+        _pair_hits[key] = hits
+        if len(_pair_hits) > 64:            # 别让这张表无限长大
+            for k, v in list(_pair_hits.items()):
+                if not any(now - t < 60 for t in v):
+                    _pair_hits.pop(k, None)
+    return True
+
+# 访问对端必须绕开系统代理：用户常年挂着 VPN / 代理，
+# 不绕的话发往 192.168.x 的请求会被塞进代理隧道，永远连不上。
+_direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+class PeerError(RuntimeError):
+    """和对端通信失败（连不上 / 返回非 JSON / 超时）。"""
+
+
+def _peer_json(base: str, path: str, payload: dict | None = None,
+               timeout: float = 6.0) -> dict:
+    """请求另一台电脑上的本程序。返回解析后的 JSON，失败抛 PeerError。"""
+    url = base.rstrip("/") + path
+    headers = {"Accept": "application/json"}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method="POST" if payload is not None else "GET")
+    try:
+        with _direct.open(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise PeerError(f"对端返回 HTTP {exc.code}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise PeerError(str(reason) or "连接超时") from exc
+    try:
+        out = json.loads(body or "{}")
+    except ValueError:
+        raise PeerError("对端返回的不是有效响应") from None
+    return out if isinstance(out, dict) else {}
+
+
+def _open_peer(url: str) -> None:
+    """在默认浏览器里打开对端页面。失败不阻断流程——界面上还留着可点的链接。"""
+    if os.environ.get("WIFILINK_NO_OPEN"):      # 自动化测试时别真去开浏览器
+        return
+    try:
+        if os.name == "nt":
+            os.startfile(url)       # noqa: S606  （打开默认浏览器，不是执行程序）
+        else:
+            import webbrowser
+            webbrowser.open(url)
+    except OSError:
+        pass
+
+
+
+def create_app(token: str, host_ip: str, port: int, discovery=None) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = None
     share_url = f"http://{host_ip}:{port}/j/{token}"
@@ -140,10 +222,12 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         path = request.path
         if _is_local():
             return None
-        if path.startswith("/j/"):
-            return None
+        if path.startswith("/j/") or path.startswith("/p/"):
+            return None                      # 扫码入口 / 配对票据入口
         if path.startswith("/static/") or path == "/favicon.ico":
             return None
+        if path == "/api/discovery/pair" or path.startswith("/api/pair/status/"):
+            return None                      # 跨机配对：只交换「我是谁」，不碰数据
         if path.startswith("/desktop"):
             return jsonify(ok=False, error="forbidden"), 403
         supplied = (request.cookies.get(PHONE_COOKIE)
@@ -163,6 +247,21 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         resp = make_response(redirect("/"))
         resp.set_cookie(PHONE_COOKIE, token, max_age=60 * 60 * 24 * 30,
                         samesite="Lax")
+        return resp
+
+    @app.get("/p/<tk>")
+    def peer_join(tk: str):
+        """已配对电脑的入口。票据由对方点「允许」后下发，60 秒内有效。"""
+        pid = pairing.redeem_ticket(tk)
+        if not pid:
+            return Response("这条连接链接已经失效，请在发起连接的电脑上重新连一次。",
+                            403, mimetype="text/plain; charset=utf-8")
+        pairing.touch(pid, request.remote_addr or "")
+        resp = make_response(redirect("/"))
+        resp.set_cookie(PHONE_COOKIE, token, max_age=60 * 60 * 24 * 30,
+                        samesite="Lax")
+        # 只是给页面标一句「已连接到谁」，不参与鉴权
+        resp.set_cookie("wl_peer", pid, max_age=60 * 60 * 24 * 30, samesite="Lax")
         return resp
 
     @app.get("/")
@@ -213,6 +312,191 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
             defaultDownloadDir=config.default_download_dir(),
             configPath=config.config_path(),
         )
+
+    # ---------- 局域网发现与配对 ----------
+    @app.get("/api/pc/peers")
+    def pc_peers():
+        """本机能看到谁、已经记住了谁。"""
+        if not _is_local():
+            return jsonify(ok=False), 403
+        paired = {p["id"]: p for p in pairing.list_peers()}
+        nearby = []
+        if discovery is not None:
+            for item in discovery.peers():
+                item["paired"] = item["id"] in paired
+                nearby.append(item)
+        return jsonify(
+            ok=True,
+            me=device.info(),
+            nearby=nearby,
+            paired=sorted(paired.values(), key=lambda x: x["lastSeen"], reverse=True),
+            discovery=(discovery.snapshot() if discovery is not None
+                       else {"enabled": False, "error": "", "port": 0, "peers": []}),
+        )
+
+    @app.post("/api/pc/discovery/refresh")
+    def pc_discovery_refresh():
+        if not _is_local():
+            return jsonify(ok=False), 403
+        if discovery is None:
+            return jsonify(ok=False, error="发现服务没有启动"), 503
+        discovery.query()
+        return jsonify(ok=True, peers=discovery.peers())
+
+    @app.delete("/api/pc/peers/<pid>")
+    def pc_peer_remove(pid: str):
+        if not _is_local():
+            return jsonify(ok=False), 403
+        pairing.revoke_tickets(pid)
+        if not pairing.remove_peer(pid):
+            return jsonify(ok=False, error="没有这台设备的记录"), 404
+        return jsonify(ok=True)
+
+    @app.post("/api/pc/peer/connect")
+    def pc_peer_connect():
+        """本机主动去连局域网里的另一台电脑。"""
+        if not _is_local():
+            return jsonify(ok=False), 403
+        if discovery is None:
+            return jsonify(ok=False, error="发现服务没有启动"), 503
+        body = request.get_json(silent=True) or {}
+        pid = str(body.get("id") or "").strip()
+        target = next((p for p in discovery.peers() if p["id"] == pid), None)
+        if target is None:
+            return jsonify(ok=False, error="这台电脑已经不在线了，点「重新搜索」再看看"), 404
+
+        base = f"http://{target['ip']}:{target['port']}"
+        payload: dict = {"id": device.device_id(), "name": device.display_name()}
+        known = pairing.get_peer(pid)
+        if known and known.get("secret"):
+            ts, sig = pairing.make_proof(known["secret"], device.device_id())
+            payload["ts"] = ts
+            payload["proof"] = sig
+        try:
+            reply = _peer_json(base, "/api/discovery/pair", payload)
+        except PeerError as exc:
+            return jsonify(ok=False, error=f"连不上 {target['ip']}（{exc}）"), 502
+
+        if reply.get("status") == "paired" and reply.get("ticket"):
+            url = f"{base}/p/{reply['ticket']}"
+            _open_peer(url)
+            return jsonify(ok=True, status="paired", url=url, target=target)
+
+        rid = str(reply.get("rid") or "")
+        if not rid:
+            return jsonify(ok=False, error=str(reply.get("error") or "对端没有给出回应")), 502
+        already = bool(known and known.get("secret"))
+        with _outgoing_lock:
+            _outgoing[rid] = {"base": base, "id": pid, "ip": target["ip"],
+                              "name": target.get("name") or "", "ts": time.time()}
+        who = target.get("name") or target["ip"]
+        if already:
+            msg = f"「{who}」那边已经解除过配对，请在它上面重新点「允许」"
+        else:
+            msg = f"已向「{who}」发出请求，请在那台电脑上点「允许」"
+        return jsonify(ok=True, status="pending", rid=rid, target=target, message=msg)
+
+    @app.get("/api/pc/peer/status/<rid>")
+    def pc_peer_status(rid: str):
+        """等对方主人点「允许」。界面每秒问一次。"""
+        if not _is_local():
+            return jsonify(ok=False), 403
+        with _outgoing_lock:
+            info = dict(_outgoing.get(rid) or {})
+        if not info:
+            return jsonify(ok=False, status="expired", error="这次请求已经结束了"), 404
+        if time.time() - info["ts"] > pairing.PENDING_TTL + 30:
+            with _outgoing_lock:
+                _outgoing.pop(rid, None)
+            return jsonify(ok=False, status="expired", error="等太久没回应，请重新连一次"), 410
+        try:
+            reply = _peer_json(info["base"], f"/api/pair/status/{rid}")
+        except PeerError as exc:
+            return jsonify(ok=False, status="error", error=f"和对方失去联系（{exc}）"), 502
+
+        status = reply.get("status")
+        if status == "allowed" and reply.get("ticket"):
+            url = f"{info['base']}/p/{reply['ticket']}"
+            secret = str(reply.get("secret") or "")
+            name = str(reply.get("name") or info.get("name") or "")
+            if secret:
+                pairing.add_peer(info["id"], name, info["ip"], secret)
+            with _outgoing_lock:
+                _outgoing.pop(rid, None)
+            _open_peer(url)
+            return jsonify(ok=True, status="allowed", url=url)
+        if status == "denied":
+            with _outgoing_lock:
+                _outgoing.pop(rid, None)
+            return jsonify(ok=True, status="denied", error="对方拒绝了这次连接")
+        if status != "pending":
+            with _outgoing_lock:
+                _outgoing.pop(rid, None)
+            return jsonify(ok=False, status="expired",
+                           error=str(reply.get("error") or "这次请求已经结束了"))
+        return jsonify(ok=True, status="pending")
+
+    @app.get("/api/pair/pending")
+    def pair_pending_list():
+        if not _is_local():
+            return jsonify(ok=False), 403
+        return jsonify(ok=True, items=pairing.pending_list(), me=device.info())
+
+    @app.post("/api/pair/pending/<rid>/allow")
+    def pair_allow(rid: str):
+        if not _is_local():
+            return jsonify(ok=False), 403
+        item = pairing.pending_settle(rid, True)
+        if item is None:
+            return jsonify(ok=False, error="这条请求已经失效了"), 404
+        return jsonify(ok=True, name=item["name"], id=item["id"])
+
+    @app.post("/api/pair/pending/<rid>/deny")
+    def pair_deny(rid: str):
+        if not _is_local():
+            return jsonify(ok=False), 403
+        item = pairing.pending_settle(rid, False)
+        if item is None:
+            return jsonify(ok=False, error="这条请求已经失效了"), 404
+        return jsonify(ok=True)
+
+    # ---- 下面两个是「别的电脑来敲门」的接口，允许匿名访问 ----
+    @app.post("/api/discovery/pair")
+    def discovery_pair():
+        """对端请求连接。认得出（proof 有效）就直接发票据，认不出就挂起等主人点。"""
+        if not _pair_rate_ok(request.remote_addr or ""):
+            return jsonify(ok=False, error="请求太频繁，稍等一会儿再试"), 429
+        body = request.get_json(silent=True) or {}
+        pid = str(body.get("id") or "").strip()
+        if not re.fullmatch(r"[0-9a-f]{16,64}", pid):
+            return jsonify(ok=False, error="设备标识不合法"), 400
+        name = re.sub(r"\s+", " ", str(body.get("name") or "")).strip()[:24] or "另一台电脑"
+        ip = request.remote_addr or ""
+        ts, proof = body.get("ts"), body.get("proof")
+        if ts is not None and isinstance(proof, str) and pairing.verify_proof(pid, ts, proof):
+            pairing.touch(pid, ip)
+            return jsonify(ok=True, status="paired",
+                           ticket=pairing.issue_ticket(pid),
+                           id=device.device_id(), name=device.display_name())
+        item = pairing.pending_create(pid, name, ip)
+        return jsonify(ok=True, status="pending", rid=item["rid"],
+                       id=device.device_id(), name=device.display_name())
+
+    @app.get("/api/pair/status/<rid>")
+    def discovery_pair_status(rid: str):
+        item = pairing.pending_get(rid)
+        if item is None:
+            return jsonify(ok=False, status="expired", error="请求已过期"), 404
+        if item["state"] == "pending":
+            return jsonify(ok=True, status="pending")
+        if item["state"] == "denied":
+            return jsonify(ok=True, status="denied", error="对方拒绝了这次连接")
+        # 只把结果发给当初发起请求的那台机器，rid 被猜中也拿不走
+        if item["ip"] and request.remote_addr != item["ip"]:
+            return jsonify(ok=False, status="expired", error="请求来源不匹配"), 403
+        item = pairing.pending_consume(rid) or item
+        return jsonify(ok=True, status="allowed", ticket=item["ticket"],
+                       secret=item["secret"], name=device.display_name())
 
     # ---------- 接收目录配置 ----------
     @app.get("/api/config")
@@ -283,6 +567,13 @@ def create_app(token: str, host_ip: str, port: int) -> Flask:
         snap["ok"] = True
         snap["uploads"] = uploads.snapshot()
         snap["shot"] = dict(_shot_info)
+        # 局域网里看见的电脑、等主人确认的配对请求、已经记住的设备
+        snap["nearby"] = discovery.peers() if discovery is not None else []
+        snap["pending"] = pairing.pending_list()
+        snap["paired"] = pairing.list_peers()
+        # 手机/对端页面靠这两个字段说清「连到了哪台电脑」
+        snap["hostName"] = device.display_name()
+        snap["isPeer"] = bool(request.cookies.get("wl_peer"))
         return jsonify(snap)
 
     # ---------- 上传（手机 → 电脑）----------

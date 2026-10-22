@@ -261,6 +261,9 @@ async function poll() {
       else if ($('#uploadArea').innerHTML) $('#uploadArea').innerHTML = '';
     }
 
+    // 局域网里发现 / 被请求连接的电脑，和文件列表无关，每次都看一眼
+    renderPeers(s.nearby, s.pending, s.paired);
+
     // 截图结果的落地提示。框选覆盖层 toast 只闪一下，窗口秒关，
     // 所以真正的「成没成、剪贴板里有没有」这句话在主窗口恢复后补在这里。
     if (s.shot && s.shot.seq) {
@@ -557,6 +560,192 @@ document.addEventListener('keydown', (e) => {
     openShot();
   }
 });
+
+/* ---------- 局域网里的其他电脑 ----------
+   两个方向都走这里：
+   · 我发现了别人 → 「连接」
+   · 别人要连我   → 「允许 / 拒绝」（优先显示，因为有人在等）
+   条子的内容每秒都会重算，但只有内容真的变了才重建 DOM，
+   否则用户点下去的瞬间节点被换掉，点击就丢了。 */
+let peerSig = '';
+let peerRid = '';
+let peerWaitName = '';
+let peerWatch = 0;
+
+function agoText(ts) {
+  if (!ts) return '';
+  const d = Math.max(0, Date.now() / 1000 - ts);
+  if (d < 60) return '刚刚';
+  if (d < 3600) return `${Math.floor(d / 60)} 分钟前`;
+  if (d < 86400) return `${Math.floor(d / 3600)} 小时前`;
+  return `${Math.floor(d / 86400)} 天前`;
+}
+
+function peerBarView(nearby, pending, paired) {
+  if (pending.length) {
+    const p = pending[0];
+    const more = pending.length > 1 ? `（还有 ${pending.length - 1} 台在等）` : '';
+    return {
+      cls: 'peer-bar warn',
+      html: `<span class="peer-who"><b>${escapeHtml(p.name)}</b>`
+        + `<span class="peer-sub">（${escapeHtml(p.ip)}）想连接这台电脑${more}</span></span>`
+        + `<button class="peer-btn" data-allow="${escapeHtml(p.rid)}">允许</button>`
+        + `<button class="peer-btn ghost" data-deny="${escapeHtml(p.rid)}">拒绝</button>`,
+    };
+  }
+
+  if (peerRid) {
+    return {
+      cls: 'peer-bar',
+      html: `<span class="peer-who"><span class="peer-sub">已向 `
+        + `<b>${escapeHtml(peerWaitName || '对方电脑')}</b> 发出连接请求，`
+        + `请在那台电脑上点「允许」…</span></span>`
+        + `<button class="peer-btn ghost" data-cancel="1">取消</button>`,
+    };
+  }
+
+  const known = new Set((paired || []).map((p) => p.id));
+  const fresh = (nearby || []).filter((n) => !known.has(n.id));
+  if (fresh.length) {
+    const n = fresh[0];
+    const more = fresh.length > 1 ? ` 等 ${fresh.length} 台` : '';
+    return {
+      cls: 'peer-bar',
+      html: `<span class="peer-who">发现 <b>${escapeHtml(n.name)}</b>`
+        + `<span class="peer-sub">（${escapeHtml(n.ip)}）${more}</span></span>`
+        + `<button class="peer-btn" data-connect="${escapeHtml(n.id)}">连接</button>`
+        + `<button class="peer-btn ghost" data-refresh="1">重新搜索</button>`,
+    };
+  }
+
+  return { cls: 'peer-bar', html: '' };
+}
+
+function renderPeers(nearby, pending, paired) {
+  const bar = $('#peerBar');
+  if (!bar) return;
+  const view = peerBarView(nearby || [], pending || [], paired || []);
+  const sig = view.cls + '|' + view.html;
+  if (sig !== peerSig) {
+    peerSig = sig;
+    bar.className = view.cls;
+    bar.innerHTML = view.html;
+    bar.hidden = !view.html;
+  }
+
+  const panel = $('#peerPanel');
+  if (!panel) return;
+  if (!paired || !paired.length) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  $('#peerList').innerHTML = paired.map((p) => `
+    <div class="peer-row">
+      <span class="pname" title="${escapeHtml((p.name || '') + ' · ' + (p.lastIp || ''))}">${escapeHtml(p.name || p.lastIp || '另一台电脑')}</span>
+      <span class="pwhen">${agoText(p.lastSeen)}</span>
+      <button class="peer-del" data-forget="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name || '')}" title="断开并忘掉这台电脑">×</button>
+    </div>`).join('');
+}
+
+async function connectPeer(id, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/pc/peer/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const j = await r.json();
+    if (j.ok && j.status === 'paired') {
+      toast('已连接，浏览器里打开了对方的页面');
+    } else if (j.ok && j.status === 'pending') {
+      peerRid = j.rid;
+      peerWaitName = (j.target && j.target.name) || '';
+      peerSig = '';
+      toast(j.message || '已发出请求');
+      startPeerWatch();
+    } else {
+      toast(j.error || '连接失败', true);
+    }
+  } catch (err) {
+    toast('连接失败：' + (err.message || err), true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function stopPeerWatch() {
+  clearTimeout(peerWatch);
+  peerWatch = 0;
+}
+
+function startPeerWatch() {
+  stopPeerWatch();
+  const tick = async () => {
+    if (!peerRid) return;
+    try {
+      const r = await fetch(`/api/pc/peer/status/${encodeURIComponent(peerRid)}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (j.status === 'pending') {
+        peerWatch = setTimeout(tick, 1000);
+        return;
+      }
+      peerRid = '';
+      peerSig = '';
+      if (j.status === 'allowed') toast('已连接，浏览器里打开了对方的页面');
+      else if (j.status === 'denied') toast(j.error || '对方拒绝了这次连接', true);
+      else toast(j.error || '这次连接没有完成', true);
+    } catch (err) {
+      peerRid = '';
+      peerSig = '';
+      toast('和对方失去联系', true);
+    }
+  };
+  peerWatch = setTimeout(tick, 900);
+}
+
+async function answerPeer(rid, allow) {
+  const r = await fetch(`/api/pair/pending/${encodeURIComponent(rid)}/${allow ? 'allow' : 'deny'}`,
+    { method: 'POST' });
+  const j = await r.json();
+  peerSig = '';
+  if (j.ok) {
+    toast(allow ? `已允许${j.name ? '「' + j.name + '」' : ''}连接` : '已拒绝这次连接');
+  } else {
+    toast(j.error || '操作失败', true);
+  }
+}
+
+async function forgetPeer(id, name) {
+  const ok = window.confirm(`不再自动信任「${name || '这台电脑'}」？\n下次连接需要在两台电脑上重新确认。`);
+  if (!ok) return;
+  const r = await fetch(`/api/pc/peers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const j = await r.json();
+  peerSig = '';
+  toast(j.ok ? '已忘记这台电脑' : (j.error || '操作失败'), !j.ok);
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-connect],[data-allow],[data-deny],[data-cancel],[data-refresh],[data-forget]');
+  if (!t) return;
+  const d = t.dataset;
+  if (d.connect) connectPeer(d.connect, t);
+  else if (d.allow) answerPeer(d.allow, true);
+  else if (d.deny) answerPeer(d.deny, false);
+  else if (d.cancel) { peerRid = ''; peerSig = ''; stopPeerWatch(); }
+  else if (d.refresh) refreshPeers();
+  else if (d.forget) forgetPeer(d.forget, d.name);
+});
+
+async function refreshPeers() {
+  try {
+    await fetch('/api/pc/discovery/refresh', { method: 'POST' });
+    toast('正在搜索局域网…');
+  } catch (err) {
+    toast('搜索失败：' + (err.message || err), true);
+  }
+}
 
 /* ---------- 启动 ---------- */
 (async function boot() {

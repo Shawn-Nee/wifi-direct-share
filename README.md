@@ -29,6 +29,7 @@ Windows 电脑 ⇄ 手机，同一个 Wi-Fi 下扫码即传。**手机端不用�
 | 电脑截图 → 手机 | 电脑上点「截图」，拖动框选，回车发出去；按 `PrintScreen` 直接唤起。发出去的同时这张图也**进了 Windows 剪贴板**，可以立刻在任何软件里 Ctrl+V |
 | 文字互传 | 手机发的文字自动进电脑剪贴板，直接 Ctrl+V |
 | 手机文件 → 其他软件 | 在「来自手机」里点该行的**复制**图标，到微信 / Word / 资源管理器里 Ctrl+V |
+| 电脑 → 电脑 | 两台都开着本程序时会互相发现，点「连接」+ 对方点「允许」即可（见下文） |
 
 手机上收到电脑发来的文件是这个样子（图片直接出缩略图，点开可长按保存）：
 
@@ -109,6 +110,37 @@ Windows 剪贴板。所以截完不用再去文件夹找文件，直接在微信
 
 <img src="docs/screenshots/folder-picker.png" width="430" alt="选择接收文件夹">
 
+### 两台电脑之间
+
+同一个 Wi-Fi 下，两台电脑都开着本程序，不用扫码：
+
+1. 先启动的那台（A）什么都不用做，窗口开着就行
+2. 后启动的那台（B）顶上会自动冒出一条：**发现「A 的电脑名」（192.168.1.20）** —— 点「连接」
+3. A 的窗口里同时出现橙色提示：**「B 的电脑名」想连接这台电脑** —— 点「允许」
+4. 浏览器自动打开 A 的页面，像手机一样收发文件
+
+<img src="docs/screenshots/peer-found.png" alt="B 发现局域网里的另一台电脑">
+
+A 侧看到的是这样：
+
+<img src="docs/screenshots/peer-ask.png" alt="A 收到连接请求">
+
+**只有第一次要确认。** 允许之后两边互相记住（侧栏「已连过的电脑」里能看到），
+下次 B 启动点一下「连接」就直接进去了，不再打扰 A。想撤销：点那台电脑后面的 **×**，
+A 立刻忘掉它，下次连接重新走确认流程。
+
+<img src="docs/screenshots/peer-paired.png" alt="已连过的电脑">
+
+**为什么不能自动连？** 发现是靠 UDP 广播的，同一个 Wi-Fi 里任何设备都能收到那几句
+「我是谁、在哪个地址」。如果连令牌一起广播出去，等于把家门钥匙贴在门上——任何连上这个
+Wi-Fi 的人都能读写你电脑上的文件。所以广播里只有名字和地址，权限得由 A 的主人当场点头，
+然后发一张 60 秒内有效的一次性票据给 B 去换会话。
+
+记住设备用的也不是「报个 ID 就放行」（ID 是明文广播的，谁都能抄），而是第一次允许时私下
+发给 B 一段随机密钥，之后 B 每次用它对时间戳算 HMAC 当作通行证。A 那边删掉这条记录，
+密钥立刻作废。B 只能拿到「传文件、发文字、看截图」这些能力，**碰不到 A 的截图、剪贴板、
+本地文件夹**——那些仍然只对本机开放。
+
 ## 接收目录配置
 
 配置文件在 `%APPDATA%\WIFI直连\config.json`（不放 exe 旁边：便携程序可能被丢进 Program Files，那里写不了文件）。
@@ -147,6 +179,13 @@ Windows 剪贴板。所以截完不用再去文件夹找文件，直接在微信
 - 看一眼窗口里「局域网 IP」后面的网卡名：应该是 `WLAN` 或 `以太网`，**如果是 VPN / `vEthernet` / `VMware`，那这个地址手机一定连不上**
 - 点「局域网 IP」可以切到别的网卡的地址，二维码会跟着重画
 - 检查 Windows 防火墙是否放行了本程序（专用网络 / 公用网络）
+
+**另一台电脑没被发现？**
+- 两台必须连同一个 Wi-Fi / 同一台路由器；手机热点也行
+- Wi-Fi 开了「访客网络隔离 / AP 隔离」的话广播过不去，这时只能手输地址
+- 防火墙除了 TCP，还要放行本程序的**入站 UDP 8729**（程序安装在按程序放行的规则里，通常一并覆盖）
+- 窗口顶上会显示发现了谁；没出来的话点「重新搜索」再等几秒
+- 确实搜不到可以直接在浏览器里输 `http://对方的IP:8720/j/<对方的令牌>`
 
 **IP 是怎么选出来的？**
 
@@ -227,6 +266,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 run.py                启动入口（选端口、选网卡、读配置、起服务、开窗口）
 wifilink/config.py    用户配置：接收目录的读取、校验、落盘
 wifilink/netutil.py   网卡枚举与排序（GetAdaptersAddresses），筛掉 VPN / 虚拟机地址
+wifilink/device.py    本机身份：稳定的设备 ID 与对外显示的名字
+wifilink/discovery.py 局域网发现：UDP 8729 广播，逐网卡定向发送
+wifilink/pairing.py   配对：一次性票据、HMAC proof、白名单（peers.json）
 wifilink/store.py     文件/文字清单与会话状态
 wifilink/server.py    HTTP 接口：上传、下载、鉴权、二维码
 wifilink/desktop.py   应用窗口（Edge --app 模式）
@@ -248,6 +290,7 @@ tools/make_icon.py    生成图标
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/j/<token>` | 扫码入口，写 cookie 后跳手机端页面 |
+| GET | `/p/<ticket>` | 已配对电脑的入口，一次性票据换会话（60 秒有效） |
 | GET | `/api/state` | 状态快照（文件、文字、上传进度，以及最近一次截图的结果 `shot`） |
 | GET | `/api/session` | 连接信息：推荐 IP、`ipName`（网卡名）、`ips` / `nics`（全部候选与网关） |
 | GET | `/api/ip` | 重新枚举网卡地址（仅本机） |
@@ -267,4 +310,14 @@ tools/make_icon.py    生成图标
 | POST | `/api/pc/screenshot/<id>/send` | 按 `{x,y,w,h}` 在原图上裁切落盘并加入列表，`{full:true}` 为整屏；同时把裁好的图写进剪贴板，返回 `clip: {ok, error}`（仅本机） |
 | DELETE | `/api/pc/screenshot/<id>` | 放弃本次截图（删掉暂存图），恢复主窗口（仅本机） |
 | POST | `/api/pc/screenshot/<id>/close` | 覆盖层被直接关闭时的兜底：丢弃暂存 + 恢复主窗口（仅本机） |
+| GET | `/api/pc/peers` | 局域网里能看到的电脑 + 已记住的设备（仅本机） |
+| POST | `/api/pc/discovery/refresh` | 重新广播一次「谁在线上」（仅本机） |
+| POST | `/api/pc/peer/connect` | 连局域网里的某台电脑，返回 `paired`（直接连通）或 `pending`（等对方允许）（仅本机） |
+| GET | `/api/pc/peer/status/<rid>` | 等对方确认的轮询入口（仅本机） |
+| DELETE | `/api/pc/peers/<id>` | 忘掉一台已配对的电脑（仅本机） |
+| GET | `/api/pair/pending` | 别人发来的连接请求（仅本机） |
+| POST | `/api/pair/pending/<rid>/allow` | 允许这次连接，生成密钥与票据（仅本机） |
+| POST | `/api/pair/pending/<rid>/deny` | 拒绝这次连接（仅本机） |
+| POST | `/api/discovery/pair` | **跨机**：对端请求连接，只认设备 ID + 可选 HMAC proof |
+| GET | `/api/pair/status/<rid>` | **跨机**：对端轮询自己那次请求的结果 |
 | GET | `/api/qr.png?ip=` | 二维码 |

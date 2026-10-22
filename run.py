@@ -18,7 +18,8 @@ import threading
 import time
 import urllib.request
 
-from wifilink import config, netutil
+from wifilink import config, device, netutil
+from wifilink import discovery as discovery_mod
 from wifilink.server import create_app
 from wifilink.store import store
 
@@ -82,6 +83,10 @@ def main() -> int:
     parser.add_argument("--ip", default="")
     parser.add_argument("--headless", action="store_true", help="不开窗口")
     parser.add_argument("--token", default="", help="固定访问口令（默认随机）")
+    parser.add_argument("--discovery-port", type=int, default=discovery_mod.DISCOVERY_PORT,
+                        help="局域网发现用的 UDP 端口（默认 8729）")
+    parser.add_argument("--no-discovery", action="store_true",
+                        help="关闭局域网自动发现（只保留扫码 / 手动连接）")
     parser.add_argument("--download-dir", default="",
                         help="接收目录；给了就写进配置并立即生效")
     args = parser.parse_args()
@@ -99,7 +104,13 @@ def main() -> int:
     host_ip = args.ip or (cards[0].ip if cards else netutil.primary_ip())
     token = args.token or secrets.token_urlsafe(9)
 
-    app = create_app(token, host_ip, port)
+    me = device.info()
+    disc = None
+    if not args.no_discovery:
+        disc = discovery_mod.Discovery(port, me["id"], me["name"],
+                                       udp_port=args.discovery_port)
+
+    app = create_app(token, host_ip, port, discovery=disc)
 
     from waitress import serve
     server_thread = threading.Thread(
@@ -121,6 +132,9 @@ def main() -> int:
         fatal("服务启动失败：端口可能被占用，或被防火墙/安全软件拦截。")
         return 1
 
+    if disc is not None:
+        disc.start()
+
     url = f"http://{host_ip}:{port}/j/{token}"
     local_url = f"http://127.0.0.1:{port}/desktop"
     pick = next((c for c in cards if c.ip == host_ip), None)
@@ -132,7 +146,13 @@ def main() -> int:
     print(f"{bar}")
     print(f"  手机扫码后访问：{url}")
     print(f"  本机控制台：    {local_url}")
+    print(f"  本机名称：      {me['name']}（{me['id'][:8]}…）")
     print(f"  接收目录：      {store.download_dir}")
+    if disc is not None:
+        state = "已开启" if not disc.error else f"不可用（{disc.error}）"
+        print(f"  局域网发现：    {state}，UDP {args.discovery_port}")
+    else:
+        print("  局域网发现：    已关闭（--no-discovery）")
     if pick:
         print(f"  所用网卡：      {pick.name}（{pick.ip}，网关 {pick.gateway or '无'}）")
     print(f"  本机可用地址：  {', '.join(c.ip for c in cards) or '(' + host_ip + ')'}")
